@@ -60,6 +60,8 @@ public class WeatherDataFileHandler extends DataFileHandler {
                 Index3D index3D = new Index3D(new int[] {1, latIndex, lonIndex});
 
                 GridMetaData gridMetaData = new GridMetaData();
+                gridMetaData.setGridLat(latArray.getDouble(latIndex));
+                gridMetaData.setGridLon(lonArray.getDouble(lonIndex));
 
                 LocationWeatherData locationWeatherData = new LocationWeatherData(gridMetaData, System.currentTimeMillis(), DataType.FORECAST);
                 locationWeatherData.setWindChill(windChill.getDouble(index3D));
