@@ -6,6 +6,7 @@ import de.fu_berlin.agdb.importer.payload.LocationWeatherData;
 import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
 import ucar.ma2.Array;
+import ucar.ma2.Index3D;
 import ucar.nc2.NetcdfFile;
 import ucar.nc2.dataset.NetcdfDataset;
 
@@ -34,12 +35,12 @@ public class WeatherDataFileHandler extends DataFileHandler {
 
         int[][] originAndSection = originAndSectionForCoordinates(55, 5.5, 47, 16, netcdfFile);
 
-        GridMetaData gridMetaData = new GridMetaData();
+
 
         Date date;
         Array windChill                    = netcdfFile.findVariable("Temperature_maximum_wind").read(); // K
         Array windSpeed                    = netcdfFile.findVariable("Wind_speed_gust_surface").read(); // m/s
-        Array atmosphereHumidity           = netcdfFile.findVariable("humidity_sigma_layer").read(); // percent
+        Array atmosphereHumidity           = netcdfFile.findVariable("Relative_humidity_sigma_layer").read(); // percent
         Array atmospherePressure           = netcdfFile.findVariable("Pressure_surface").read(); // Pa
         Array temperature                  = netcdfFile.findVariable("Temperature_surface").read(); // K
 
@@ -52,13 +53,32 @@ public class WeatherDataFileHandler extends DataFileHandler {
 
         netcdfFile.close();
 
-        // TODO save locationweatherdata for each grid
+        // TODO may need more work
 
-        LocationWeatherData locationWeatherData = new LocationWeatherData(gridMetaData, System.currentTimeMillis(), DataType.FORECAST);
+        for (int latIndex = originAndSection[0][0]; latIndex <= originAndSection[0][0] + originAndSection[1][0]; latIndex++) {
+            for (int lonIndex = originAndSection[0][1]; lonIndex <= originAndSection[0][1] + originAndSection[1][1]; lonIndex++) {
+                Index3D index3D = new Index3D(new int[] {1, latIndex, lonIndex});
 
+                GridMetaData gridMetaData = new GridMetaData();
 
+                LocationWeatherData locationWeatherData = new LocationWeatherData(gridMetaData, System.currentTimeMillis(), DataType.FORECAST);
+                locationWeatherData.setWindChill(windChill.getDouble(index3D));
+                locationWeatherData.setWindSpeed(windSpeed.getDouble(index3D));
+                locationWeatherData.setAtmosphereHumidity(atmosphereHumidity.getDouble(index3D));
+                locationWeatherData.setAtmospherePressure(atmospherePressure.getDouble(index3D));
+                locationWeatherData.setTemperature(temperature.getDouble(index3D));
+                locationWeatherData.setCloudage(cloudage.getDouble(index3D));
+                locationWeatherData.setMinimumAirGroundTemperature(minimumAirGroundTemperature.getDouble(index3D));
+                locationWeatherData.setMaximumWindSpeed(maximumWindSpeed.getDouble(index3D));
+                locationWeatherData.setPrecipitationDepth(precipitationDepth.getDouble(index3D));
+                locationWeatherData.setSunshineDuration(sunshineDuration.getDouble(index3D));
+                locationWeatherData.setSnowHeight(snowHeight.getDouble(index3D));
 
+                noaaDataHandler.addData(locationWeatherData);
+            }
         }
+
+    }
 
     // Raster Deutschland wie bei REGNIE
     // oben links 55°05'00.0"N+5°50'00.0"E
