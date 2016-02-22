@@ -7,132 +7,112 @@ import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
 import ucar.ma2.Array;
 import ucar.ma2.Index3D;
+import ucar.ma2.Index4D;
 import ucar.nc2.NetcdfFile;
 import ucar.nc2.dataset.NetcdfDataset;
 
+import java.io.File;
 import java.io.IOException;
-import java.sql.Date;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
 
 public class WeatherDataFileHandler extends DataFileHandler {
 
-    private final static Logger logger = LogManager.getLogger(WeatherDataFileHandler.class);
-    private INOAADataHandler noaaDataHandler;
+    private static final Logger logger = LogManager.getLogger(WeatherDataFileHandler.class);
 
-    public WeatherDataFileHandler(IWeatherDataFileProvider weatherDataFileProvider, INOAADataHandler noaaDataHandler) {
-        super (weatherDataFileProvider.getWeatherDataFile());
-        this.noaaDataHandler = noaaDataHandler;
+    public WeatherDataFileHandler(File file) {
+        super(file);
     }
 
     @Override
-    public void handleDataFile() throws IOException {
+    public List<LocationWeatherData> handleDataFile() {
         logger.debug("Analyzing weather data file " + getFile().getName());
 
-        NetcdfFile netcdfFile = NetcdfDataset.openFile(getFile().getAbsolutePath(), null);
-        logger.debug("Opened file in netcdf " + getFile().getName());
-
-        Array latArray = netcdfFile.findVariable("lat").read();
-        Array lonArray = netcdfFile.findVariable("lon").read();
-
-        int[][] originAndSection = originAndSectionForCoordinates(55, 5.5, 47, 16, netcdfFile);
-
-
-
-        Date date;
-        Array windChill                    = netcdfFile.findVariable("Temperature_maximum_wind").read(); // K
-        Array windSpeed                    = netcdfFile.findVariable("Wind_speed_gust_surface").read(); // m/s
-        Array atmosphereHumidity           = netcdfFile.findVariable("Relative_humidity_sigma_layer").read(); // percent
-        Array atmospherePressure           = netcdfFile.findVariable("Pressure_surface").read(); // Pa
-        Array temperature                  = netcdfFile.findVariable("Temperature_surface").read(); // K
-
-        Array cloudage                     = netcdfFile.findVariable("Total_cloud_cover_entire_atmosphere_3_Hour_Average").read(); // percent
-        Array minimumAirGroundTemperature  = netcdfFile.findVariable("Minimum_temperature_height_above_ground_3_Hour_Minimum").read(); // K
-        Array maximumWindSpeed             = netcdfFile.findVariable("Wind_speed_gust_surface").read(); // m/s
-        Array precipitationDepth           = netcdfFile.findVariable("Total_precipitation_surface_3_Hour_Accumulation").read(); // kg/m^2
-        Array sunshineDuration             = netcdfFile.findVariable("Sunshine_Duration_surface").read(); // s
-        Array snowHeight                   = netcdfFile.findVariable("Snow_depth_surface").read(); // m
-
-        netcdfFile.close();
-
-        // TODO may need more work
-
-        for (int latIndex = originAndSection[0][0]; latIndex <= originAndSection[0][0] + originAndSection[1][0]; latIndex++) {
-            for (int lonIndex = originAndSection[0][1]; lonIndex <= originAndSection[0][1] + originAndSection[1][1]; lonIndex++) {
-                Index3D index3D = new Index3D(new int[] {1, latIndex, lonIndex});
-
-                GridMetaData gridMetaData = new GridMetaData();
-                gridMetaData.setGridLat(latArray.getDouble(latIndex));
-                gridMetaData.setGridLon(lonArray.getDouble(lonIndex));
-
-                LocationWeatherData locationWeatherData = new LocationWeatherData(gridMetaData, System.currentTimeMillis(), DataType.FORECAST);
-                locationWeatherData.setWindChill(windChill.getDouble(index3D));
-                locationWeatherData.setWindSpeed(windSpeed.getDouble(index3D));
-                locationWeatherData.setAtmosphereHumidity(atmosphereHumidity.getDouble(index3D));
-                locationWeatherData.setAtmospherePressure(atmospherePressure.getDouble(index3D));
-                locationWeatherData.setTemperature(temperature.getDouble(index3D));
-                locationWeatherData.setCloudage(cloudage.getDouble(index3D));
-                locationWeatherData.setMinimumAirGroundTemperature(minimumAirGroundTemperature.getDouble(index3D));
-                locationWeatherData.setMaximumWindSpeed(maximumWindSpeed.getDouble(index3D));
-                locationWeatherData.setPrecipitationDepth(precipitationDepth.getDouble(index3D));
-                locationWeatherData.setSunshineDuration(sunshineDuration.getDouble(index3D));
-                locationWeatherData.setSnowHeight(snowHeight.getDouble(index3D));
-
-                noaaDataHandler.addData(locationWeatherData);
+        NetcdfFile netcdfFile = null;
+        try {
+            netcdfFile = NetcdfDataset.openFile(getFile().getAbsolutePath(), null);
+            logger.debug("Opened file in netcdf " + getFile().getName());
+            return process(netcdfFile);
+        } catch (IOException e) {
+            logger.error("Trying to open " + getFile().getName(), e);
+        } finally {
+            if (netcdfFile != null) {
+                try {
+                    netcdfFile.close();
+                } catch (IOException e) {
+                    logger.error("Trying to close " + getFile().getName(), e);
+                }
             }
         }
-
+        return null;
     }
 
-    // Raster Deutschland wie bei REGNIE
-    // oben links 55°05'00.0"N+5°50'00.0"E
-    // unten rechts 47°00'00.0"N+16°00'00.00"E
-
-    // NOAA
-    // oben links 55°00'00.0"N+5°30'00.0"E (55°N+5.5°E)
-    // unten rechts 47°00'00.0"N+16°00'00.0"E (47°N+16°E)
-
-    /**
-     * Gets the two arrays origin and section needed for a subsection of the grid.
-     *
-     * @param originLat latitude in decimal degrees of the upper left corner
-     * @param originLon longitude in decimal degrees of the upper left corner
-     * @param targetLat latitude in decimal degrees of the lower right corner
-     * @param targetLon longitude in decimal degrees of the lower right corner
-     * @param file grid file
-     * @return array of arrays containing the origin index and the section index
-     */
-    private int[][] originAndSectionForCoordinates(double originLat, double originLon, double targetLat, double targetLon, NetcdfFile file) {
-        if (originLat < targetLat || originLon > targetLon) {
-            throw new IllegalArgumentException("origin coordinates must be upper left corner");
-        }
-        int[] origin = {0,0};
-        int[] section = {0,0};
+    private List<LocationWeatherData> process(NetcdfFile netcdfFile) {
         try {
-            Array latData = file.findVariable("lat").read();
-            float[] latArray = (float[]) latData.copyTo1DJavaArray();
+            Double forecastHour = netcdfFile.findVariable("time").read().getDouble(0);
+
+            float[] latArray = (float[]) netcdfFile.findVariable("lat").read().copyTo1DJavaArray();
+            float[] lonArray = (float[]) netcdfFile.findVariable("lon").read().copyTo1DJavaArray();
+
+            int varHour = 0;
+            if (forecastHour > 240) {
+                varHour = 12;
+            } else if (forecastHour % 2 == 1){
+                varHour = 3;
+            } else {
+                varHour = 6;
+            }
+
+            Date date;
+
+            Array cloudage = netcdfFile.findVariable("Total_cloud_cover_entire_atmosphere_" + varHour + "_Hour_Average").read(); // percent
+            Array precipitationDepth = netcdfFile.findVariable("Total_precipitation_surface_" + varHour + "_Hour_Accumulation").read(); // kg/m^2
+            Array temperatureHigh = netcdfFile.findVariable("Maximum_temperature_height_above_ground_" + varHour + "_Hour_Maximum").read(); // K
+            Array temperatureLow = netcdfFile.findVariable("Minimum_temperature_height_above_ground_" + varHour + "_Hour_Minimum").read(); // K
+            Array windChill = netcdfFile.findVariable("Temperature_maximum_wind").read(); // K
+            Array windSpeed = netcdfFile.findVariable("Wind_speed_gust_surface").read(); // m/s
+            Array atmosphereHumidity = netcdfFile.findVariable("Relative_humidity_sigma_layer").read(); // percent
+            Array atmospherePressure = netcdfFile.findVariable("Pressure_surface").read(); // Pa
+            Array temperature = netcdfFile.findVariable("Temperature_surface").read(); // K
+            Array maximumWindSpeed = netcdfFile.findVariable("Wind_speed_gust_surface").read(); // m/s
+            Array sunshineDuration = netcdfFile.findVariable("Sunshine_Duration_surface").read(); // s
+            Array snowHeight = netcdfFile.findVariable("Snow_depth_surface").read(); // m
+
+            List<LocationWeatherData> locationWeatherDataList = new ArrayList<>(1419);
+
             for (int latIndex = 0; latIndex < latArray.length; latIndex++) {
-                if (latArray[latIndex] == originLat) {
-                    origin[0] = latIndex;
-                }
-                else if (latArray[latIndex] == targetLat) {
-                    section[0] = latIndex - origin[0];
-                    break;
+                for (int lonIndex = 0; lonIndex < lonArray.length; lonIndex++) {
+                    GridMetaData gridMetaData = new GridMetaData(latArray[latIndex], lonArray[lonIndex]);
+
+                    Index3D index3D = new Index3D(new int[] {0, latIndex, lonIndex});
+
+                    LocationWeatherData locationWeatherData = new LocationWeatherData(gridMetaData, System.currentTimeMillis(), DataType.FORECAST);
+                    locationWeatherData.setCloudage(cloudage.getDouble(index3D));
+                    locationWeatherData.setPrecipitationDepth(precipitationDepth.getDouble(index3D));
+                    locationWeatherData.setWindChill(windChill.getDouble(index3D));
+                    locationWeatherData.setWindSpeed(windSpeed.getDouble(index3D));
+                    locationWeatherData.setAtmosphereHumidity(atmosphereHumidity.getDouble(index3D));
+                    locationWeatherData.setAtmospherePressure(atmospherePressure.getDouble(index3D));
+                    locationWeatherData.setTemperature(temperature.getDouble(index3D));
+                    locationWeatherData.setMaximumWindSpeed(maximumWindSpeed.getDouble(index3D));
+                    locationWeatherData.setSunshineDuration(sunshineDuration.getDouble(index3D));
+                    locationWeatherData.setSnowHeight(snowHeight.getDouble(index3D));
+
+                    Index4D index4D = new Index4D(new int[] {0, 0, latIndex, lonIndex});
+
+                    locationWeatherData.setTemperatureHigh(temperatureHigh.getDouble(index4D));
+                    locationWeatherData.setTemperatureLow(temperatureLow.getDouble(index4D));
+
+                    locationWeatherDataList.add(locationWeatherData);
                 }
             }
-            Array lonData = file.findVariable("lon").read();
-            float[] lonArray = (float[]) lonData.copyTo1DJavaArray();
-            for (int lonIndex = 0; lonIndex < lonArray.length; lonIndex++) {
-                if (lonArray[lonIndex] == originLon) {
-                    origin[1] = lonIndex;
-                }
-                else if (lonArray[lonIndex] == targetLon) {
-                    section[1] = lonIndex - origin[1];
-                    break;
-                }
-            }
-            return new int[][]{origin, section};
+
+            return locationWeatherDataList;
         } catch (IOException e) {
-            logger.error("Error getting the index");
+            logger.error("Trying to process " + getFile().getName(), e);
             return null;
         }
+
     }
 }
